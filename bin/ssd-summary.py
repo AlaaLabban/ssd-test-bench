@@ -50,7 +50,7 @@ def bwlog(prefix):
         with open(p) as f:
             for line in f:
                 parts = line.split(",")
-                if len(parts) > 1 and parts[2].strip() in ("0", "1"):
+                if len(parts) > 2 and parts[2].strip() in ("0", "1"):
                     vals.append(int(parts[1]) / 1024)
     if not vals:
         return None, None
