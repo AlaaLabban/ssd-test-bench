@@ -458,6 +458,8 @@ function drawTSpark(ts, W8 = 80) {
 
 // a drive is finished when Phase B is done, or Phase A is done and no wipe is planned for it
 function isDone(r) { return r.phase === 'B' || (r.phase === 'A' && (r.kind === 'nvme' || !(S.config||{}).auto_wipe)); }
+// settled = nothing more will happen to it (finished, or already flagged as failing)
+function isSettled(r) { return isDone(r) || r.verdict !== 'ok'; }
 function verdictOf(r) {
   if (r.verdict !== 'ok') return 'fail';
   return isDone(r) ? 'pass' : 'part';
@@ -466,7 +468,7 @@ function bayCount() {
   const rows = S.rows || [], cfg = S.config || {};
   const maxLabel = Math.max(0, ...rows.map(r => r.label), S.drive ? S.drive.label : 0);
   if (cfg.expected > 0) return Math.max(cfg.expected, maxLabel);
-  const allDone = rows.length && rows.every(isDone) && S.state !== 'running' && S.state !== 'attention';
+  const allDone = rows.length && rows.every(isSettled) && S.state !== 'running' && S.state !== 'attention';
   return maxLabel + (allDone || !maxLabel ? 1 : 0);          // open-ended: one empty bay for the next drive
 }
 function renderBays() {
@@ -488,7 +490,7 @@ function renderBays() {
 function renderTable() {
   const rows = S.rows || [], cfg = S.config || {};
   const clean = rows.filter(r => r.verdict === 'ok' && isDone(r));
-  const batchDone = cfg.expected > 0 && rows.length >= cfg.expected && rows.every(isDone);
+  const batchDone = cfg.expected > 0 && rows.length >= cfg.expected && rows.every(isSettled);
   let h = `<thead><tr><th>Rank</th><th>Bay</th><th>Model</th><th>Serial</th><th class="num">Wear</th><th class="num">Written</th><th class="num">Hours</th><th class="num">Old read med/min</th><th class="num">Write med/min</th><th class="num">CRC</th><th>Wiped</th><th>Verdict</th><th>Pick</th></tr></thead><tbody>`;
   let rank = 0;
   rows.forEach(r => {
