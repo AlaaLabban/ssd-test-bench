@@ -4,6 +4,7 @@
 #   ssd-test.sh check                  show which drive is in the enclosure; changes nothing
 #   ssd-test.sh A <label>              READ-ONLY: SMART, short test, full-surface read, long test
 #   ssd-test.sh B <label> <serial>     DESTRUCTIVE: secure erase, full write + verify, final TRIM
+#                                      (shows a warning and asks you to type ERASE)
 #   ssd-test.sh summary                one ranked table of every drive tested so far
 #
 # <label> = the number you write on the drive (1, 2, 3 ...). The runner picks it for you.
@@ -122,10 +123,39 @@ phase_a() {
 }
 
 # --- phase B: destructive ---------------------------------------------------
+confirm_wipe() {   # loud warning + typed confirmation; --yes skips the prompt (the runner, AUTO_WIPE=yes only)
+    local size; size="$(lsblk -dn -o SIZE "$DEV" | tr -d ' ')"
+    cat >&2 <<EOF
+
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │  ⚠  PHASE B ERASES THIS DRIVE COMPLETELY. THIS CANNOT BE UNDONE.     │
+  └──────────────────────────────────────────────────────────────────────┘
+     drive   #$LABEL  $MODEL
+     serial  $SERIAL
+     size    $size   ($DEV)
+
+     Every file, partition and old backup on it is destroyed: secure erase,
+     then the whole drive is overwritten with test data. Nothing can recover it.
+     Phase A (read-only) already tells you if the drive is healthy — you only
+     need Phase B if you want the drive wiped.
+
+EOF
+    if [[ $ASSUME_YES == yes ]]; then
+        printf '     --yes given: wiping without asking.\n\n' >&2; return 0
+    fi
+    [[ -t 0 ]] || die "Phase B needs a typed confirmation: run it in a terminal (the runner passes --yes only when AUTO_WIPE=yes)"
+    local answer
+    read -rp "     Type ERASE in capitals to wipe this drive, anything else cancels: " answer
+    [[ "$answer" == ERASE ]] || die "cancelled — nothing was written to the drive"
+    printf '\n     Starting in 10 s. Press Ctrl+C now to cancel.\n' >&2
+    sleep 10
+}
+
 phase_b() {
     [[ $KIND == sata ]] || die "NVMe: wipe + write-test it natively in an M.2 slot (nvme format --ses=1), not through the USB bridge"
     [[ "$TYPED_SERIAL" == "$SERIAL" ]] || die "typed serial '$TYPED_SERIAL' != drive serial '$SERIAL'"
     [[ -f "$DIR/A-done" ]] || die "run phase A on #$LABEL first"
+    confirm_wipe
     local start; start=$(date +%s)
     log "PHASE B (DESTRUCTIVE) on #$LABEL  $MODEL  serial $SERIAL  ($DEV)"
     temp_logger & local tl=$!
@@ -182,6 +212,7 @@ case "${1:-}" in
     A)  [[ $EUID -eq 0 ]] || die "run as root (sudo)"
         find_drive; LABEL="${2:?label}"; setup_dir "$LABEL"; phase_a ;;
     B)  [[ $EUID -eq 0 ]] || die "run as root (sudo)"
+        ASSUME_YES=no; [[ "${4:-}" == --yes ]] && ASSUME_YES=yes
         find_drive; LABEL="${2:?label}"; TYPED_SERIAL="${3:?serial}"; setup_dir "$LABEL"; phase_b ;;
     summary)
         exec python3 -I "$BIN/ssd-summary.py" "$BASE" ;;
