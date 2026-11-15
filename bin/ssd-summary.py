@@ -140,7 +140,8 @@ for d in sorted(dirs, key=lambda p: int(os.path.basename(p).split("-")[0])):
     rows.append(dict(label=int(label), model=model, serial=serial, kind=kind, gb=cap, used=used, tbw=tbw,
                      hours=poh, rd_med=rmed, rd_min=rmin, wr_med=wmed, wr_min=wmin, crc=bad["crc"],
                      phase="B" if os.path.exists(f"{d}/B-done") else "A" if os.path.exists(f"{d}/A-done") else None,
-                     erased=erase, verdict=",".join(flags) or "ok"))
+                     erased=erase, wipe_cancelled=os.path.exists(f"{d}/B-cancelled"),
+                     verdict=",".join(flags) or "ok"))
 
 # best first: clean before flagged, then least worn, least data written, fastest weakest-read window
 rows.sort(key=lambda r: (r["verdict"] != "ok", r["used"] if r["used"] is not None else 999,

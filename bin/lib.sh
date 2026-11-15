@@ -5,7 +5,7 @@ CONF="${SSD_BENCH_CONF:-$KIT/config.conf}"
 
 # defaults (config.conf overrides them)
 EXPECTED_DRIVES=0; KEEP_COUNT=0; AUTO_WIPE=no; MAX_GB=0; MODEL_FILTER=""; PROTECT_SERIALS=""
-RESULTS_DIR=""; DASH_HOST=0.0.0.0; DASH_PORT=8095; TEMP_WARN=80; NTFY_URL=""; NTFY_TOKEN=""; ERASE_PASS=wipe
+WIPE_GRACE_SEC=120; RESULTS_DIR=""; DASH_HOST=0.0.0.0; DASH_PORT=8095; TEMP_WARN=80; NTFY_URL=""; NTFY_TOKEN=""; ERASE_PASS=wipe
 
 if [[ -r "$CONF" ]]; then
     # read KEY=value lines only — the file is never executed

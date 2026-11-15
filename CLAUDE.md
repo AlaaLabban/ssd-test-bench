@@ -15,23 +15,30 @@ the logs; explain results in plain language. Prefer reading the results files ov
    `fio` with writes against any device unless the user has explicitly said, in this conversation,
    that the specific drive (by number or serial) is meant to be erased.** Phase B destroys all data.
 2. **Never set `AUTO_WIPE=yes` on your own initiative.** Explain the consequence and let the user
-   decide. Default is `no`.
-3. **Never pass a device path you typed yourself to anything destructive.** The scripts find the
+   decide. Default is `no` (read-only), and that is what most users want. Never lower
+   `WIPE_GRACE_SEC` or delete a drive's `B-cancelled` marker unless the user asks for that drive.
+3. **Never pass `--yes` to `ssd-test.sh B`, and never pipe or script an answer into its `ERASE`
+   prompt.** `--yes` exists only for the runner in wipe mode. If the user wants a drive wiped by
+   hand, give them the command to run in their own terminal so they see the warning and type
+   `ERASE` themselves.
+4. **Never pass a device path you typed yourself to anything destructive.** The scripts find the
    target themselves (exactly one USB disk, nothing mounted) — keep it that way. Don't "fix" a
    "found 2 USB disks" error by editing the check; tell the user to unplug the other disk.
-4. **Never weaken the safety checks** in `bin/ssd-test.sh` / `bin/ssd-runner.sh` (one-USB-disk
-   rule, mounted check, serial typed back for Phase B, ignore drives present at runner start,
-   `MAX_GB`, `MODEL_FILTER`, `PROTECT_SERIALS`).
-5. **Don't stop `ssd-runner` or unplug while a drive is mid-test** without telling the user it
+5. **Never weaken the safety checks** in `bin/ssd-test.sh` / `bin/ssd-runner.sh` (one-USB-disk
+   rule, mounted check, serial typed back and `ERASE` confirmation for Phase B, the wipe grace
+   period, ignore drives present at runner start, `MAX_GB`, `MODEL_FILTER`, `PROTECT_SERIALS`).
+6. **Don't stop `ssd-runner` or unplug while a drive is mid-test** without telling the user it
    aborts that drive's run (it resumes when the same drive is plugged back in).
-6. Before any command that needs `sudo`, say what it does. Read-only commands are fine to run.
+7. Before any command that needs `sudo`, say what it does. Read-only commands are fine to run.
 
 ## Layout
 
 - `bin/ssd-test.sh` — the test. `check` / `info` (read-only), `A <n>` (read-only phase),
-  `B <n> <serial>` (destructive), `summary`.
+  `B <n> <serial>` (destructive: warning box + typed `ERASE`), `summary`.
 - `bin/ssd-runner.sh` — loop run by systemd unit **`ssd-runner`** (root; not enabled at boot).
-  Assigns the next number to each newly plugged drive, runs A, then B if `AUTO_WIPE=yes` and SATA.
+  Assigns the next number to each newly plugged drive and runs A. Only with `AUTO_WIPE=yes` and a
+  SATA drive: writes `B-pending` (deadline), counts down `WIPE_GRACE_SEC`, then runs B with
+  `--yes`; unplugging during the countdown writes `B-cancelled` and the drive is never wiped.
 - `bin/ssd-status.py` + `bin/ssd-status.html` — dashboard, systemd unit **`ssd-status`**
   (runs as the user, read-only). `/api` returns the JSON snapshot. The HTML is re-read on every
   request, so page edits show on refresh without a restart.
@@ -41,7 +48,8 @@ the logs; explain results in plain language. Prefer reading the results files ov
 - `results/<n>-<serial>/` — per drive: `log.txt`, `A0/A1/B1-smart-*.json|txt` (smartctl -x),
   `A-fullread.json`, `B-writeverify.json` (fio), `A-read_bw*.log` / `B-write_bw*.log`
   (MB/s in 5 s windows, KiB/s in column 2), `temps.csv`, `kernel-A.txt` / `kernel-B.txt`,
-  marker files `A-done` / `B-done` (contain fio's exit code), `B-secure-erase` (yes/no).
+  marker files `A-done` / `B-done` (contain fio's exit code), `B-secure-erase` (yes/no),
+  `B-pending` (wipe countdown deadline, epoch s), `B-cancelled` (wipe cancelled by unplugging).
 
 ## Useful read-only commands
 

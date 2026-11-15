@@ -2,7 +2,11 @@
 
 Test a pile of used SSDs one after another: plug a drive into a USB enclosure, watch a live
 dashboard, swap when it says **DONE**, and get a ranked report at the end telling you which
-drives are healthy, which to keep, and which to retire. Optionally wipes each drive securely.
+drives are healthy, which to keep, and which to retire.
+
+> **Read-only by default.** Out of the box the bench only *reads* your drives (Phase A) and never
+> writes a single byte to them. Wiping (Phase B) is a separate, opt-in mode with loud warnings —
+> see [Wiping drives](#wiping-drives-phase-b--opt-in).
 
 Works for any number of drives (1, 4, 30 …), SATA or NVMe, any size.
 
@@ -16,12 +20,13 @@ Works for any number of drives (1, 4, 30 …), SATA or NVMe, any size.
 | | 2. Short self-test | The drive's own quick self-check |
 | | 3. Full-surface read | Every block can still be read; finds slow or failing areas in **old** data |
 | | 4. Long self-test | The drive's own full self-check |
-| **B** (only if `AUTO_WIPE=yes`, SATA only) | 5. ATA secure erase | Wipes all cells, including hidden spare ones |
+| **B** (opt-in, SATA only — **erases the drive**) | 5. ATA secure erase | Wipes all cells, including hidden spare ones |
 | | 6. Write every block | Fills the drive with checksummed data |
 | | 7. Verify every block | Reads it all back and checks every checksum |
 | | 8. TRIM | Leaves the drive empty and fresh |
 
-Phase A never writes anything. Phase B **destroys all data** on the drive and is off by default.
+Phase A never writes anything, and it is all the runner does unless you turn wipe mode on.
+Phase B **destroys all data** on the drive and is off by default.
 
 A drive gets flagged (**RETIRE**) if any of these happen: read errors, verify errors, a failed
 self-test, reallocated / pending / uncorrectable sectors, bad-block counters growing during the
@@ -74,7 +79,7 @@ Edit `config.conf` in the kit folder. The ones that matter:
 | `EXPECTED_DRIVES` | `12` | How many drives you'll test. Sets the number of bays on the dashboard. `0` = open-ended. |
 | `KEEP_COUNT` | `8` | When all drives are done, the best 8 healthy ones are marked **KEEP**, the other healthy ones **SPARE**. `0` = no pick. |
 | `MAX_GB` | `600` | Never touch a drive bigger than this. Set it just above your batch size so a backup disk plugged in by mistake is safe. |
-| `AUTO_WIPE` | `no` / `yes` | `yes` = after the read test, **erase and stress-test** every SATA drive. Only if every drive is meant to be wiped. |
+| `AUTO_WIPE` | `no` (default) | Leave it `no` for read-only testing. `yes` = **wipe mode**, see [Wiping drives](#wiping-drives-phase-b--opt-in). |
 | `MODEL_FILTER` | `^(TOSHIBA\|Micron)` | Optional: only test these models. |
 | `PROTECT_SERIALS` | `S4XXXX 1234ABC` | Serials that must never be touched. |
 | `NTFY_URL` | `https://ntfy.sh/my-random-topic-8f3k` | Optional phone notifications: install the **ntfy** app, subscribe to the same (hard-to-guess) topic. |
@@ -98,7 +103,7 @@ After editing: `sudo systemctl restart ssd-status` (and `ssd-runner` if it's run
    scope and temperature gauge move.
 5. **Write the bay number on the drive** (tape + marker). The number is how the report refers to it.
 6. Wait for the green **COMPLETE — swap in the next drive** banner (and the ntfy push, if set).
-   Rough times for a 512 GB SATA SSD: read-only ≈ 30–60 min, with wipe ≈ 1.5–2 h.
+   Rough time for a 512 GB SATA SSD: ≈ 30–60 min read-only (≈ 1.5–2 h in wipe mode).
 7. Unplug the enclosure, swap the drive, plug it back in. The next number is assigned
    automatically. Repeat.
 8. When the last one is done: `sudo systemctl stop ssd-runner`.
@@ -107,6 +112,32 @@ After editing: `sudo systemctl restart ssd-status` (and `ssd-runner` if it's run
 
 **Interrupted?** If the power drops or you unplug mid-test, just plug the **same** drive back in
 while the runner is running — it recognises the serial and resumes under the same number.
+
+---
+
+## Wiping drives (Phase B — opt-in)
+
+Only do this for drives you're giving away, selling or reusing. **It cannot be undone.**
+Phase A already tells you whether a drive is healthy; Phase B adds a secure erase and a full
+write-and-verify stress test.
+
+**One drive, by hand** (safest):
+```bash
+sudo bin/ssd-test.sh B 3 <SERIAL>     # after Phase A has run on drive #3
+```
+It prints a warning box with the drive's model, serial and size, asks you to type **`ERASE`**,
+then waits 10 s more (Ctrl+C cancels). Anything else cancels with nothing written.
+
+**Every drive in a batch** — wipe mode:
+1. Set `AUTO_WIPE=yes` in `config.conf` and restart the runner.
+2. The dashboard header switches from green **READ-ONLY MODE** to red **⚠ WIPE MODE ON**, and the
+   runner sends a phone warning when it starts.
+3. After each drive's read test, a red **WIPE PENDING** banner counts down `WIPE_GRACE_SEC`
+   (default 120 s) and your phone gets an urgent push. **Unplug the enclosure during the countdown
+   to cancel** — that drive is then never wiped by the runner.
+4. Set `AUTO_WIPE=no` again when the batch is done.
+
+NVMe sticks are never wiped through USB; see Troubleshooting.
 
 ---
 
@@ -121,6 +152,8 @@ while the runner is running — it recognises the serial and resumes under the s
   SSDs; dips to near zero or errors are not.
 - **Temperature** — keep it under the warning line; give the enclosure air if it climbs.
 - **Block map** — visual of how far the read / write / verify has got.
+- **Mode badge** (top right) — green **READ-ONLY MODE**, or red **⚠ WIPE MODE ON** when
+  `AUTO_WIPE=yes`.
 - **Bays** — one tile per drive: green PASS, red FAIL, amber = testing now.
 - **Test report** — the ranking. Picks: **KEEP**, **SPARE**, **GOOD** (no keep count set),
   **RETIRE** (red flag found — don't trust it with data).
@@ -136,7 +169,7 @@ temperatures, kernel errors, the log). Nothing is ever sent anywhere except the 
 ```bash
 sudo bin/ssd-test.sh check                    # what's in the enclosure? (changes nothing)
 sudo bin/ssd-test.sh A 1                      # read-only test, call it drive #1
-sudo bin/ssd-test.sh B 1 <SERIAL>             # DESTRUCTIVE wipe + write/verify; type the serial back
+sudo bin/ssd-test.sh B 1 <SERIAL>             # ERASES the drive: warning + type ERASE to confirm
 sudo bin/ssd-test.sh summary                  # ranking table
 ```
 For long runs use `sudo systemd-run --unit=ssd-test --collect $PWD/bin/ssd-test.sh A 1` so

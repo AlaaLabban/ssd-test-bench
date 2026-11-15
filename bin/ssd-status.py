@@ -102,7 +102,7 @@ STAGES = [("short", "Short self-test", "A"), ("read", "Full read · old data", "
           ("trim", "TRIM", "B")]
 
 
-def pipeline(lines, kind, wrote_all, a_done=False):
+def pipeline(lines, kind, wrote_all, a_done=False, cancelled=False):
     st = {k: {"status": "pending", "note": "", "t0": None} for k, _, _ in STAGES}
 
     def go(k, status, note="", t=None):
@@ -142,7 +142,8 @@ def pipeline(lines, kind, wrote_all, a_done=False):
         st["write"]["status"] = "done"
         st["verify"]["status"] = "active"
         st["verify"]["t0"] = st["write"]["t0"]
-    b_note = "native, in an M.2 slot" if kind == "nvme" else None if AUTO_WIPE else "wipe off (AUTO_WIPE=no)"
+    b_note = ("native, in an M.2 slot" if kind == "nvme" else "wipe cancelled (unplugged)" if cancelled
+              else None if AUTO_WIPE else "wipe off (AUTO_WIPE=no)")
     if b_note:
         for k in ("erase", "write", "verify", "trim"):
             if st[k]["status"] == "pending" and (a_done or kind == "nvme"):
@@ -160,7 +161,8 @@ def results():
 
 
 def finished(d, kind):
-    return os.path.exists(f"{d}/B-done") or (os.path.exists(f"{d}/A-done") and (kind == "nvme" or not AUTO_WIPE))
+    return os.path.exists(f"{d}/B-done") or (os.path.exists(f"{d}/A-done") and
+                                             (kind == "nvme" or not AUTO_WIPE or os.path.exists(f"{d}/B-cancelled")))
 
 
 def snapshot():
@@ -170,6 +172,7 @@ def snapshot():
             "stages": pipeline([], "sata", False), "active": None, "pct": None, "done_gb": None, "cap_gb": None,
             "speed": None, "dir": None, "eta": None, "temp": None, "temps": [], "trace": list(_trace),
             "log": [], "rows": results(), "attached": bool(name),
+            "wipe_at": None,
             "config": {"expected": num("EXPECTED_DRIVES"), "keep": num("KEEP_COUNT"), "auto_wipe": AUTO_WIPE,
                        "temp_warn": num("TEMP_WARN") or 80, "results": BASE},
             "host": socket.gethostname(), "bridge": bridge(name)}
@@ -192,7 +195,8 @@ def snapshot():
             r, w = int(f[2]) * 512, int(f[6]) * 512
         except OSError:
             pass
-    stages = pipeline(lines, kind, bool(cap) and w >= cap * 0.999, os.path.exists(f"{d}/A-done"))
+    stages = pipeline(lines, kind, bool(cap) and w >= cap * 0.999, os.path.exists(f"{d}/A-done"),
+                      os.path.exists(f"{d}/B-cancelled"))
     snap.update(drive={"label": int(label), "serial": serial, "model": model, "kind": kind,
                        "started": ts(head)}, stages=stages, temps=temps[-120:],
                 temp=temps[-1] if temps else None, log=lines[-40:])
@@ -201,6 +205,14 @@ def snapshot():
     if finished(d, kind):
         snap["state"] = "done"
         snap["message"] = "Finished — swap in the next drive" if name else "Enclosure empty — insert the next drive"
+        return snap
+    try:
+        wipe_at = int(open(f"{d}/B-pending").read().strip())
+    except (OSError, ValueError):
+        wipe_at = None
+    if wipe_at and name:
+        snap.update(state="wipe", wipe_at=wipe_at,
+                    message="Read test finished. This drive will be ERASED — unplug the enclosure now to keep its data")
         return snap
     if offline or not name:
         snap["state"] = "attention"

@@ -51,6 +51,12 @@ if [[ ! -f "$KIT/config.conf" ]]; then
 else
     echo "config.conf already exists — kept as is."
 fi
+if grep -qE '^AUTO_WIPE=["'"'"']?yes' "$KIT/config.conf"; then
+    echo "  ⚠ WIPE MODE IS ON (AUTO_WIPE=yes): the runner will ERASE every SATA drive after its read test."
+    echo "    For read-only testing set AUTO_WIPE=no in config.conf."
+else
+    echo "Mode: read-only (AUTO_WIPE=no). Drives are tested, never erased."
+fi
 chmod +x "$KIT"/bin/*.sh "$KIT"/bin/*.py "$KIT/setup.sh"
 mkdir -p "$KIT/results"; chmod 755 "$KIT/results"
 

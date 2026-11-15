@@ -68,6 +68,13 @@ body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:50;
 .banner b{font:800 12px var(--mono);letter-spacing:.16em;padding:4px 8px;border-radius:4px}
 .banner.attention b{background:var(--bad);color:#200}
 .banner.done b{background:var(--ok);color:#022}
+.banner.wipe{border-color:var(--bad);background:rgba(255,79,94,.18);color:#fff;animation:pulseb .8s ease-in-out infinite;font-size:16px}
+.banner.wipe b{background:var(--bad);color:#200}
+.banner .cd{margin-left:auto;font:800 28px var(--mono);color:var(--bad);text-shadow:0 0 14px rgba(255,79,94,.6)}
+.state.wipe{background:rgba(255,79,94,.22);color:#fff;border:1px solid var(--bad)}
+.mode{font:800 10.5px var(--mono);letter-spacing:.14em;padding:4px 9px;border-radius:4px;text-transform:uppercase}
+.mode.ro{color:var(--ok);border:1px solid rgba(61,255,143,.45);background:rgba(61,255,143,.08)}
+.mode.wipe{color:#200;background:var(--bad);box-shadow:0 0 14px rgba(255,79,94,.45)}
 @keyframes pulseb{50%{box-shadow:0 0 0 4px rgba(255,79,94,.15)}}
 
 /* DUT */
@@ -207,11 +214,12 @@ td.num{text-align:right} th.num{text-align:right}
     <div class="brand"><span class="chip"></span>SSD Test Bench</div>
     <div class="meta" id="meta">—</div>
     <div class="sp"></div>
+    <div class="mode ro" id="mode" title="">read-only</div>
     <div class="rec" id="rec"><i></i>LIVE</div>
     <div class="clock" id="clock">--:--:--</div>
   </header>
 
-  <div class="banner" id="banner"><b id="bannerTag">ATTN</b><span id="bannerMsg"></span></div>
+  <div class="banner" id="banner"><b id="bannerTag">ATTN</b><span id="bannerMsg"></span><span class="cd" id="bannerCd"></span></div>
 
   <section class="grid g-hero">
     <div class="panel">
@@ -308,6 +316,7 @@ function tick() {
   $('stepElapsed').textContent = act && act.t0 ? 'T+' + fmtDur(t - act.t0) : '';
   $('dutElapsed').textContent = S.drive && S.drive.started && S.state !== 'done' ? 'on bench ' + fmtDur(t - S.drive.started) : '';
   if (S.eta != null) $('eta').textContent = fmtDur(S.eta - drift);
+  $('bannerCd').textContent = S.state === 'wipe' && S.wipe_at ? Math.max(0, Math.ceil(S.wipe_at - t)) + ' s' : '';
 }
 setInterval(tick, 1000);
 
@@ -329,8 +338,13 @@ function render() {
   // banner
   const b = $('banner'); b.className = 'banner';
   if (S.state === 'attention') { b.classList.add('show','attention'); $('bannerTag').textContent = 'ATTENTION'; $('bannerMsg').textContent = S.message; }
+  else if (S.state === 'wipe') { b.classList.add('show','wipe'); $('bannerTag').textContent = '⚠ WIPE PENDING'; $('bannerMsg').textContent = S.message; }
   else if (S.state === 'done') { b.classList.add('show','done'); $('bannerTag').textContent = 'COMPLETE'; $('bannerMsg').textContent = S.message; }
   $('rec').style.visibility = S.state === 'running' ? 'visible' : 'hidden';
+  const wm = (S.config || {}).auto_wipe;
+  $('mode').className = 'mode ' + (wm ? 'wipe' : 'ro');
+  $('mode').textContent = wm ? '⚠ wipe mode on' : 'read-only mode';
+  $('mode').title = wm ? 'AUTO_WIPE=yes: SATA drives are erased after the read test' : 'AUTO_WIPE=no: drives are only read, never erased';
 
   // header
   const cfg = S.config || {}, WARN = cfg.temp_warn || 80, WARM = WARN - 15;
@@ -359,7 +373,7 @@ function render() {
     $('fill').style.setProperty('--c', S.state === 'done' ? '#3dff8f' : '#3a4d44');
     $('gb').textContent = act && /self-test/i.test(act.name) ? 'drive is testing itself · no USB traffic' : act && act.key === 'erase' ? 'controller wiping all cells' : '—';
   }
-  $('stage').innerHTML = esc(S.state === 'running' ? (act ? act.name : 'Preparing') : S.state === 'done' ? 'All stages complete' : S.state === 'attention' ? 'Halted' : 'Idle')
+  $('stage').innerHTML = esc(S.state === 'running' ? (act ? act.name : 'Preparing') : S.state === 'done' ? 'All stages complete' : S.state === 'attention' ? 'Halted' : S.state === 'wipe' ? 'Wipe pending' : 'Idle')
     + `<em>${esc(act ? 'Phase ' + act.phase + ' · stage ' + (S.stages.indexOf(act)+1) + ' of ' + S.stages.length : S.message)}</em>`;
   if (S.eta == null) $('eta').textContent = '—';
 
@@ -457,7 +471,7 @@ function drawTSpark(ts, W8 = 80) {
 }
 
 // a drive is finished when Phase B is done, or Phase A is done and no wipe is planned for it
-function isDone(r) { return r.phase === 'B' || (r.phase === 'A' && (r.kind === 'nvme' || !(S.config||{}).auto_wipe)); }
+function isDone(r) { return r.phase === 'B' || (r.phase === 'A' && (r.kind === 'nvme' || r.wipe_cancelled || !(S.config||{}).auto_wipe)); }
 // settled = nothing more will happen to it (finished, or already flagged as failing)
 function isSettled(r) { return isDone(r) || r.verdict !== 'ok'; }
 function verdictOf(r) {
@@ -468,7 +482,7 @@ function bayCount() {
   const rows = S.rows || [], cfg = S.config || {};
   const maxLabel = Math.max(0, ...rows.map(r => r.label), S.drive ? S.drive.label : 0);
   if (cfg.expected > 0) return Math.max(cfg.expected, maxLabel);
-  const allDone = rows.length && rows.every(isSettled) && S.state !== 'running' && S.state !== 'attention';
+  const allDone = rows.length && rows.every(isSettled) && !['running','attention','wipe'].includes(S.state);
   return maxLabel + (allDone || !maxLabel ? 1 : 0);          // open-ended: one empty bay for the next drive
 }
 function renderBays() {
@@ -480,7 +494,7 @@ function renderBays() {
       if (v === 'pass') { cls = 'pass'; stat = r.erased === 'yes' || r.phase === 'B' ? 'wiped' : 'read ok'; stamp = 'PASS'; pass++; }
       else if (v === 'fail') { cls = 'fail'; stat = r.erased === 'yes' ? 'wiped' : 'not wiped'; stamp = 'FAIL'; fail++; }
       else { cls = 'part'; stat = 'phase A'; } }
-    if (i === cur) { cls = (S.state === 'attention' ? 'fail ' : '') + 'live'; stat = S.state === 'attention' ? 'halted' : (S.active || 'testing'); stamp = ''; }
+    if (i === cur) { cls = (S.state === 'attention' ? 'fail ' : '') + 'live'; stat = S.state === 'attention' ? 'halted' : S.state === 'wipe' ? 'wipe pending' : (S.active || 'testing'); stamp = ''; }
     h += `<div class="bay ${cls}"><div class="bn">${String(i).padStart(2,'0')}</div><div class="bm">${esc(model)}</div><div class="bs">${esc(stat)}</div>${stamp ? `<span class="stamp">${stamp}</span>` : ''}</div>`;
   }
   $('bays').innerHTML = h;
@@ -502,7 +516,7 @@ function renderTable() {
     else if (fin && cfg.keep > 0) pick = '<span class="pick tbd">TBD</span>';
     else if (fin) pick = '<span class="pick good">GOOD</span>';
     const wear = r.used != null ? `${r.used}%<span class="bar"><i style="width:${Math.max(0,100-r.used)}%"></i></span>` : '—';
-    const wiped = r.erased === 'yes' ? '<span class="v-ok">secure erase</span>' : r.phase === 'B' ? '<span class="v-ok">overwritten</span>' : r.kind === 'nvme' ? 'do natively' : 'no';
+    const wiped = r.erased === 'yes' ? '<span class="v-ok">secure erase</span>' : r.phase === 'B' ? '<span class="v-ok">overwritten</span>' : r.kind === 'nvme' ? 'do natively' : r.wipe_cancelled ? 'cancelled' : 'no';
     h += `<tr><td><span class="rank">${rk}</span></td><td>#${r.label}</td><td>${esc(r.model)} <span style="color:var(--faint)">${r.kind === 'nvme' ? 'NVMe' : 'SATA'} · ${r.gb} GB</span></td><td style="color:var(--dim)">${esc(r.serial)}</td>
       <td class="num">${wear}</td><td class="num">${r.tbw ?? '—'} TB</td><td class="num">${r.hours ? Number(r.hours).toLocaleString() : '—'}</td>
       <td class="num" style="${r.rd_min != null && +r.rd_min < 100 ? 'color:var(--bad)' : ''}">${r.rd_med ?? '—'} / ${r.rd_min ?? '—'}</td>
